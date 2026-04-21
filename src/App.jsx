@@ -1,5 +1,7 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import './App.css'
+
+const API = 'https://xcrco3h2nl.execute-api.eu-west-1.amazonaws.com/prod'
 
 const STATUS = ['Applied', 'Interview Scheduled', 'Assessment', 'Rejected']
 
@@ -9,14 +11,6 @@ const BADGE_CLASS = {
   'Assessment': 'badge-assessment',
   'Rejected': 'badge-rejected',
 }
-
-const INITIAL_JOBS = [
-  { id: 1, company: 'Stripe', role: 'Frontend Engineer', date: '2026-04-10', status: 'Interview Scheduled', notes: 'Referral from John. Technical round next week.' },
-  { id: 2, company: 'Notion', role: 'Product Designer', date: '2026-04-08', status: 'Applied', notes: '' },
-  { id: 3, company: 'Linear', role: 'Full Stack Engineer', date: '2026-04-05', status: 'Assessment', notes: 'Take-home task due April 20.' },
-  { id: 4, company: 'Figma', role: 'UX Engineer', date: '2026-03-28', status: 'Rejected', notes: 'Got feedback — lack of 3D experience.' },
-  { id: 5, company: 'Vercel', role: 'Developer Advocate', date: '2026-04-14', status: 'Applied', notes: 'Found via LinkedIn.' },
-]
 
 function fmtDate(d) {
   if (!d) return '—'
@@ -28,12 +22,33 @@ function fmtDate(d) {
 const EMPTY_FORM = { company: '', role: '', date: new Date().toISOString().split('T')[0], status: 'Applied', notes: '' }
 
 export default function App() {
-  const [jobs, setJobs] = useState(INITIAL_JOBS)
+  const [jobs, setJobs] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
-  const [modal, setModal] = useState(null) // null | 'add' | number (editingId)
+  const [modal, setModal] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
-  const [error, setError] = useState('')
+  const [formError, setFormError] = useState('')
+
+  useEffect(() => {
+    fetchJobs()
+  }, [])
+
+  async function fetchJobs() {
+    try {
+      setLoading(true)
+      const res = await fetch(`${API}/jobs`)
+      const data = await res.json()
+      const sorted = data.sort((a, b) => b.id.localeCompare(a.id))
+      setJobs(sorted)
+    } catch (e) {
+      setError('Failed to load jobs. Please refresh.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const filtered = useMemo(() => {
     return jobs.filter(j => {
@@ -54,37 +69,64 @@ export default function App() {
 
   function openAdd() {
     setForm({ ...EMPTY_FORM, date: new Date().toISOString().split('T')[0] })
-    setError('')
+    setFormError('')
     setModal('add')
   }
 
   function openEdit(job) {
     setForm({ company: job.company, role: job.role, date: job.date, status: job.status, notes: job.notes })
-    setError('')
+    setFormError('')
     setModal(job.id)
   }
 
   function closeModal() {
     setModal(null)
-    setError('')
+    setFormError('')
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!form.company.trim() || !form.role.trim()) {
-      setError('Company name and role are required.')
+      setFormError('Company name and role are required.')
       return
     }
-    if (modal === 'add') {
-      setJobs(prev => [{ id: Date.now(), ...form }, ...prev])
-    } else {
-      setJobs(prev => prev.map(j => j.id === modal ? { ...j, ...form } : j))
+
+    setSaving(true)
+    try {
+      if (modal === 'add') {
+        const res = await fetch(`${API}/jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(form),
+        })
+        const newJob = await res.json()
+        setJobs(prev => [newJob, ...prev])
+      } else {
+        await fetch(`${API}/jobs/${modal}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: modal, ...form }),
+        })
+        setJobs(prev => prev.map(j => j.id === modal ? { ...j, ...form } : j))
+      }
+      closeModal()
+    } catch (e) {
+      setFormError('Something went wrong. Please try again.')
+    } finally {
+      setSaving(false)
     }
-    closeModal()
   }
 
-  function handleDelete(id) {
-    if (window.confirm('Delete this application?')) {
+  async function handleDelete(id) {
+    if (!window.confirm('Delete this application?')) return
+    try {
+      await fetch(`${API}/jobs/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
       setJobs(prev => prev.filter(j => j.id !== id))
+    } catch (e) {
+      alert('Failed to delete. Please try again.')
     }
   }
 
@@ -103,22 +145,10 @@ export default function App() {
       </div>
 
       <div className="stats">
-        <div className="stat">
-          <div className="stat-label">Total</div>
-          <div className="stat-value">{stats.total}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Applied</div>
-          <div className="stat-value">{stats.applied}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Interviews</div>
-          <div className="stat-value">{stats.interviews}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Rejected</div>
-          <div className="stat-value">{stats.rejected}</div>
-        </div>
+        <div className="stat"><div className="stat-label">Total</div><div className="stat-value">{stats.total}</div></div>
+        <div className="stat"><div className="stat-label">Applied</div><div className="stat-value">{stats.applied}</div></div>
+        <div className="stat"><div className="stat-label">Interviews</div><div className="stat-value">{stats.interviews}</div></div>
+        <div className="stat"><div className="stat-label">Rejected</div><div className="stat-value">{stats.rejected}</div></div>
       </div>
 
       <div className="toolbar">
@@ -135,45 +165,47 @@ export default function App() {
       </div>
 
       <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Company</th>
-              <th>Role</th>
-              <th>Date applied</th>
-              <th>Status</th>
-              <th>Notes</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
+        {loading ? (
+          <div className="empty">Loading applications...</div>
+        ) : error ? (
+          <div className="empty error-text">{error}</div>
+        ) : (
+          <table>
+            <thead>
               <tr>
-                <td colSpan={6}>
-                  <div className="empty">No applications found</div>
-                </td>
+                <th>Company</th>
+                <th>Role</th>
+                <th>Date applied</th>
+                <th>Status</th>
+                <th>Notes</th>
+                <th></th>
               </tr>
-            ) : (
-              filtered.map(j => (
-                <tr key={j.id}>
-                  <td className="td-company">{j.company}</td>
-                  <td>{j.role}</td>
-                  <td className="td-muted">{fmtDate(j.date)}</td>
-                  <td>
-                    <span className={`badge ${BADGE_CLASS[j.status]}`}>{j.status}</span>
-                  </td>
-                  <td>
-                    <span className="note-text" title={j.notes}>{j.notes || '—'}</span>
-                  </td>
-                  <td>
-                    <button className="action-btn" onClick={() => openEdit(j)}>Edit</button>
-                    <button className="action-btn del" onClick={() => handleDelete(j.id)}>Delete</button>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>
+                    <div className="empty">No applications found</div>
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : (
+                filtered.map(j => (
+                  <tr key={j.id}>
+                    <td className="td-company">{j.company}</td>
+                    <td>{j.role}</td>
+                    <td className="td-muted">{fmtDate(j.date)}</td>
+                    <td><span className={`badge ${BADGE_CLASS[j.status]}`}>{j.status}</span></td>
+                    <td><span className="note-text" title={j.notes}>{j.notes || '—'}</span></td>
+                    <td>
+                      <button className="action-btn" onClick={() => openEdit(j)}>Edit</button>
+                      <button className="action-btn del" onClick={() => handleDelete(j.id)}>Delete</button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {modal && (
@@ -183,54 +215,38 @@ export default function App() {
 
             <div className="field">
               <label>Company name</label>
-              <input
-                type="text"
-                placeholder="e.g. Stripe"
-                value={form.company}
-                onChange={e => setForm(f => ({ ...f, company: e.target.value }))}
-              />
+              <input type="text" placeholder="e.g. Stripe" value={form.company}
+                onChange={e => setForm(f => ({ ...f, company: e.target.value }))} />
             </div>
-
             <div className="field">
               <label>Role name</label>
-              <input
-                type="text"
-                placeholder="e.g. Senior Engineer"
-                value={form.role}
-                onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-              />
+              <input type="text" placeholder="e.g. Senior Engineer" value={form.role}
+                onChange={e => setForm(f => ({ ...f, role: e.target.value }))} />
             </div>
-
             <div className="field">
               <label>Date applied</label>
-              <input
-                type="date"
-                value={form.date}
-                onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-              />
+              <input type="date" value={form.date}
+                onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
             </div>
-
             <div className="field">
               <label>Status</label>
               <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
                 {STATUS.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-
             <div className="field">
               <label>Notes</label>
-              <textarea
-                placeholder="Any additional info..."
-                value={form.notes}
-                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-              />
+              <textarea placeholder="Any additional info..." value={form.notes}
+                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
             </div>
 
-            {error && <p className="form-error">{error}</p>}
+            {formError && <p className="form-error">{formError}</p>}
 
             <div className="modal-footer">
-              <button className="btn-secondary" onClick={closeModal}>Cancel</button>
-              <button className="btn-primary" onClick={handleSave}>Save</button>
+              <button className="btn-secondary" onClick={closeModal} disabled={saving}>Cancel</button>
+              <button className="btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving...' : 'Save'}
+              </button>
             </div>
           </div>
         </div>
